@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.7
+
+- Increase generated note filename slugs from 40 to 60 characters.
+- Keep truncated filenames on whole-word boundaries whenever possible.
+
 ## 2.0.5
 
 - Include the full task block in the `content` property instead of only the first line.

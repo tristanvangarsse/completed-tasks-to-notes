@@ -350,7 +350,7 @@ function stripMarkdownStyling(value) {
 }
 
 async function getOrCreateTaskNote(app, folderPath, title, completed, content) {
-  const slug = taskFilenameSlug(title, 40);
+  const slug = taskFilenameSlug(title, 60);
   const baseName = `${completed}_${slug}`;
 
   // Check the base filename and numbered collision variants without ever
@@ -373,12 +373,19 @@ async function getOrCreateTaskNote(app, folderPath, title, completed, content) {
 }
 
 function taskFilenameSlug(value, maxLength) {
-  const slug = safeFilename(value)
+  const normalized = safeFilename(value)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, maxLength)
-    .replace(/-+$/g, '');
+    .replace(/^-+|-+$/g, '');
+
+  if (normalized.length <= maxLength) return normalized || 'completed-task';
+
+  const capped = normalized.slice(0, maxLength);
+  const lastWordBoundary = capped.lastIndexOf('-');
+  const slug = lastWordBoundary > 0
+    ? capped.slice(0, lastWordBoundary)
+    : capped.replace(/-+$/g, '');
+
   return slug || 'completed-task';
 }
 
