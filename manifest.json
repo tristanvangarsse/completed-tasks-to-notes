@@ -1,0 +1,9 @@
+{
+    "id": "topic-task-archiver",
+    "name": "Topic Task Archiver",
+    "version": "1.0.1",
+    "minAppVersion": "1.1.0",
+    "description": "Automatically dates and archives completed tasks from one task note into collision-safe topic archive notes.",
+    "author": "Tristan Van Garsse",
+    "isDesktopOnly": false
+}
