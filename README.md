@@ -9,9 +9,10 @@ When a task is checked, the plugin:
 1. Finds the nearest heading and uses it as the task's `topic`.
 2. Adds a completion date if the task does not already contain one.
 3. Creates one Markdown note for the completed task.
-4. Adds properties such as `topic`, `status`, `completed`, `type`, `heading-path`, and `source`.
-5. Preserves the entire task block, including indented context and links.
-6. Removes the original task only after the new note has been created and verified.
+4. Adds whichever properties you enable: `topic`, `status`, `completed`, `type`, `heading-path`, `source`, and `content`.
+5. Optionally writes clean task text into the note body, without a heading or checkbox.
+6. Preserves indented context and links when body content is enabled.
+7. Removes the original task only after the new note has been created and verified.
 
 ## Example
 
@@ -37,11 +38,10 @@ completed: "2026-07-31"
 type: task
 heading-path: "Tasks > Acme website redesign"
 source: "[[Tasks#Acme website redesign]]"
+content: "Ask [[Maya Chen]] whether order NP-4821 can arrive before 2026-08-14"
 ---
 
-# Ask [[Maya Chen]] whether order NP-4821 can arrive before 2026-08-14
-
-- [x] Ask [[Maya Chen]] whether order NP-4821 can arrive before 2026-08-14 ✅ 2026-07-31
+Ask [[Maya Chen]] whether order NP-4821 can arrive before 2026-08-14
   - Why: the brochures are required for the launch event
   - Related: [[Acme launch plan]]
 ```
@@ -66,8 +66,16 @@ The task text is converted to a lowercase, hyphenated filename slug and limited 
 
 - **Source task note:** note monitored for completed tasks; defaults to `Tasks.md`.
 - **Completed task notes folder:** base output folder; defaults to `Archive/Tasks`.
-- **Add source property:** links back to the original note and topic heading.
-- **Add heading path property:** stores the full nested heading path.
+- **Topic property:** stores the nearest heading as `topic`.
+- **Status property:** stores `status: completed`.
+- **Completed property:** stores the completion date.
+- **Type property:** stores `type: task`.
+- **Heading path property:** stores the full nested heading path.
+- **Source property:** links back to the original note and topic heading.
+- **Content property:** stores the task's main text in `content`, making it visible as a column in Bases.
+- **Include task content in note body:** independently writes the task as plain text below the properties. The body has no duplicate heading, checkbox, or completion-date marker.
+
+Each generated property can be independently enabled or disabled. When all property toggles are off, the note is created without YAML frontmatter. The content-property and note-body options are independent, so users may enable either, both, or neither.
 - **Conversion delay:** waits briefly after edits before processing.
 - **Show conversion notice:** displays a confirmation notice.
 
@@ -83,7 +91,6 @@ Run **Completed Tasks to Notes: Convert completed tasks to notes now** from the 
 - Filenames use the completion date plus the first 40 slugified task-title characters.
 - Filename collisions receive `_1`, `_2`, and subsequent numeric suffixes instead of overwriting another note.
 - Checkbox examples inside fenced code blocks are ignored.
-- Existing generated notes are detected through an internal identity marker.
 
 ## Upgrading from Topic Task Archiver
 
@@ -98,3 +105,7 @@ Copy `main.js`, `manifest.json`, and optionally `styles.css` into:
 ```
 
 Restart Obsidian or reload the plugin, then review **Settings → Completed Tasks to Notes**.
+
+## Note contents
+
+Generated notes do not include an internal HTML comment. When body content is enabled, the task is rendered as plain text rather than a completed checkbox, and no duplicate title or topic heading is added. Earlier versions used a hidden marker as a verification aid; current versions verify the exact newly written file content instead.

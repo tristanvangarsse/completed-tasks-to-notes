@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.0.4
+
+- Added an optional `content` property containing the task's main text for display in Obsidian Bases.
+- Added an independent toggle for including task content in the generated note body.
+- Removed the duplicate heading from generated note bodies.
+- Render completed tasks as plain text in the body instead of checkbox items.
+- Remove the completion-date marker from body text while retaining the `completed` property when enabled.
+
+## 2.0.3
+
+- Added independent on/off toggles for `topic`, `status`, `completed`, `type`, `heading-path`, and `source` properties.
+- Omit YAML frontmatter entirely when every property is disabled.
+- Removed the internal HTML identity comment from generated task notes.
+- Verify the exact newly created file content before removing the source task.
+
 ## 2.0.2
 
 - Fixed identical or similarly named tasks disappearing when an older generated note already contained the same internal marker.

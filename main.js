@@ -1,11 +1,17 @@
 const { Plugin, PluginSettingTab, Setting, Notice, TFile, TFolder, normalizePath, moment } = require('obsidian');
 
 const DEFAULT_SETTINGS = {
-  settingsVersion: 4,
+  settingsVersion: 6,
   sourceNote: 'Tasks.md',
   outputFolder: 'Archive/Tasks',
-  addSourceProperty: true,
+  addTopicProperty: true,
+  addStatusProperty: true,
+  addCompletedProperty: true,
+  addTypeProperty: true,
   addHeadingPathProperty: true,
+  addSourceProperty: true,
+  addContentProperty: true,
+  includeContentInBody: true,
   noticeOnConvert: true,
   debounceMs: 120
 };
@@ -77,8 +83,6 @@ class CompletedTasksToNotes extends Plugin {
         const completed = candidate.doneDate || moment().format('YYYY-MM-DD');
         const datedBlock = addDoneDate(candidate.block, completed);
         const topic = candidate.heading || 'Uncategorized';
-        const noteId = await stableId(`${sourcePath}\n${candidate.identityKey}`);
-        const marker = `<!-- completed-task-note-id: ${noteId} -->`;
         const title = taskTitleFromBlock(datedBlock) || 'Completed task';
         const folderPath = normalizePath(this.settings.outputFolder);
 
@@ -88,8 +92,6 @@ class CompletedTasksToNotes extends Plugin {
           folderPath,
           title,
           completed,
-          noteId,
-          marker,
           buildTaskNote({
             title,
             topic,
@@ -97,14 +99,19 @@ class CompletedTasksToNotes extends Plugin {
             completed,
             sourcePath,
             block: datedBlock,
-            marker,
+            addTopicProperty: this.settings.addTopicProperty,
+            addStatusProperty: this.settings.addStatusProperty,
+            addCompletedProperty: this.settings.addCompletedProperty,
+            addTypeProperty: this.settings.addTypeProperty,
+            addHeadingPathProperty: this.settings.addHeadingPathProperty,
             addSourceProperty: this.settings.addSourceProperty,
-            addHeadingPathProperty: this.settings.addHeadingPathProperty
+            addContentProperty: this.settings.addContentProperty,
+            includeContentInBody: this.settings.includeContentInBody
           })
         );
 
         const noteContent = await this.app.vault.cachedRead(noteResult.file);
-        if (!noteContent.includes(marker)) {
+        if (noteContent !== noteResult.content) {
           throw new Error(`Could not verify created note: ${noteResult.file.path}`);
         }
 
@@ -180,23 +187,40 @@ class CompletedTasksToNotesSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    new Setting(containerEl)
-      .setName('Add source property')
-      .setDesc('Add a link to the source note and nearest heading.')
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.addSourceProperty)
-        .onChange(async (value) => {
-          this.plugin.settings.addSourceProperty = value;
-          await this.plugin.saveSettings();
-        }));
+
+    containerEl.createEl('h3', { text: 'Generated properties' });
+
+    const propertyToggles = [
+      ['addTopicProperty', 'Topic property', 'Store the nearest heading as topic.'],
+      ['addStatusProperty', 'Status property', 'Store status: completed.'],
+      ['addCompletedProperty', 'Completed property', 'Store the task completion date.'],
+      ['addTypeProperty', 'Type property', 'Store type: task.'],
+      ['addHeadingPathProperty', 'Heading path property', 'Store the full nested heading path.'],
+      ['addSourceProperty', 'Source property', 'Link back to the source note and nearest heading.'],
+      ['addContentProperty', 'Content property', 'Store the task text in a content property for Bases and queries.']
+    ];
+
+    for (const [key, name, description] of propertyToggles) {
+      new Setting(containerEl)
+        .setName(name)
+        .setDesc(description)
+        .addToggle((toggle) => toggle
+          .setValue(this.plugin.settings[key])
+          .onChange(async (value) => {
+            this.plugin.settings[key] = value;
+            await this.plugin.saveSettings();
+          }));
+    }
+
+    containerEl.createEl('h3', { text: 'Note body' });
 
     new Setting(containerEl)
-      .setName('Add heading path property')
-      .setDesc('Add the full nested heading path as a property, in addition to the nearest topic.')
+      .setName('Include task content in note body')
+      .setDesc('Write the task as plain text in the note body, without a heading or checkbox.')
       .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.addHeadingPathProperty)
+        .setValue(this.plugin.settings.includeContentInBody)
         .onChange(async (value) => {
-          this.plugin.settings.addHeadingPathProperty = value;
+          this.plugin.settings.includeContentInBody = value;
           await this.plugin.saveSettings();
         }));
 
@@ -230,12 +254,22 @@ function migrateSettings(saved) {
     settingsVersion: DEFAULT_SETTINGS.settingsVersion,
     sourceNote: saved.sourceNote || DEFAULT_SETTINGS.sourceNote,
     outputFolder: saved.outputFolder || saved.archiveFolder || DEFAULT_SETTINGS.outputFolder,
-    addSourceProperty: typeof saved.addSourceProperty === 'boolean'
-      ? saved.addSourceProperty
-      : (typeof saved.addSourceLink === 'boolean' ? saved.addSourceLink : DEFAULT_SETTINGS.addSourceProperty),
+    addTopicProperty: typeof saved.addTopicProperty === 'boolean' ? saved.addTopicProperty : DEFAULT_SETTINGS.addTopicProperty,
+    addStatusProperty: typeof saved.addStatusProperty === 'boolean' ? saved.addStatusProperty : DEFAULT_SETTINGS.addStatusProperty,
+    addCompletedProperty: typeof saved.addCompletedProperty === 'boolean' ? saved.addCompletedProperty : DEFAULT_SETTINGS.addCompletedProperty,
+    addTypeProperty: typeof saved.addTypeProperty === 'boolean' ? saved.addTypeProperty : DEFAULT_SETTINGS.addTypeProperty,
     addHeadingPathProperty: typeof saved.addHeadingPathProperty === 'boolean'
       ? saved.addHeadingPathProperty
       : DEFAULT_SETTINGS.addHeadingPathProperty,
+    addSourceProperty: typeof saved.addSourceProperty === 'boolean'
+      ? saved.addSourceProperty
+      : (typeof saved.addSourceLink === 'boolean' ? saved.addSourceLink : DEFAULT_SETTINGS.addSourceProperty),
+    addContentProperty: typeof saved.addContentProperty === 'boolean'
+      ? saved.addContentProperty
+      : DEFAULT_SETTINGS.addContentProperty,
+    includeContentInBody: typeof saved.includeContentInBody === 'boolean'
+      ? saved.includeContentInBody
+      : DEFAULT_SETTINGS.includeContentInBody,
     noticeOnConvert: typeof saved.noticeOnConvert === 'boolean'
       ? saved.noticeOnConvert
       : (typeof saved.noticeOnArchive === 'boolean' ? saved.noticeOnArchive : DEFAULT_SETTINGS.noticeOnConvert),
@@ -246,32 +280,48 @@ function migrateSettings(saved) {
 }
 
 function buildTaskNote(options) {
-  const properties = [
-    '---',
-    `topic: ${yamlQuote(options.topic)}`,
-    'status: completed',
-    `completed: ${yamlQuote(options.completed)}`,
-    'type: task'
-  ];
+  const properties = [];
+  if (options.addTopicProperty) properties.push(`topic: ${yamlQuote(options.topic)}`);
+  if (options.addStatusProperty) properties.push('status: completed');
+  if (options.addCompletedProperty) properties.push(`completed: ${yamlQuote(options.completed)}`);
+  if (options.addTypeProperty) properties.push('type: task');
+  if (options.addHeadingPathProperty) properties.push(`heading-path: ${yamlQuote(options.headingPath || options.topic)}`);
+  if (options.addSourceProperty) properties.push(`source: ${yamlQuote(`[[${stripMd(options.sourcePath)}#${options.topic}]]`)}`);
+  if (options.addContentProperty) properties.push(`content: ${yamlQuote(options.title)}`);
 
-  if (options.addHeadingPathProperty) {
-    properties.push(`heading-path: ${yamlQuote(options.headingPath || options.topic)}`);
-  }
-  if (options.addSourceProperty) {
-    properties.push(`source: ${yamlQuote(`[[${stripMd(options.sourcePath)}#${options.topic}]]`)}`);
-  }
-
-  properties.push('---');
-  return `${properties.join('\n')}\n\n# ${options.title}\n\n${options.block.trimEnd()}\n\n${options.marker}\n`;
+  const frontmatter = properties.length > 0 ? `---\n${properties.join('\n')}\n---\n` : '';
+  const body = options.includeContentInBody ? cleanTaskBody(options.block) : '';
+  if (frontmatter && body) return `${frontmatter}\n${body}\n`;
+  if (frontmatter) return `${frontmatter}\n`;
+  if (body) return `${body}\n`;
+  return '';
 }
 
-async function getOrCreateTaskNote(app, folderPath, title, completed, noteId, marker, content) {
+function cleanTaskBody(block) {
+  const lines = block.trimEnd().split('\n');
+  if (lines.length === 0) return '';
+
+  const firstMatch = lines[0].match(/^(\s*)[-*+]\s+\[[xX]\]\s+(.*)$/);
+  const baseIndent = firstMatch ? firstMatch[1] : '';
+  lines[0] = (firstMatch ? firstMatch[2] : lines[0])
+    .replace(/\s*✅\s*\d{4}-\d{2}-\d{2}\s*$/, '')
+    .trimEnd();
+
+  if (baseIndent) {
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i].startsWith(baseIndent)) lines[i] = lines[i].slice(baseIndent.length);
+    }
+  }
+
+  return lines.join('\n').trim();
+}
+
+async function getOrCreateTaskNote(app, folderPath, title, completed, content) {
   const slug = taskFilenameSlug(title, 40);
   const baseName = `${completed}_${slug}`;
 
-  // Check the base filename and numbered collision variants. This also makes
-  // conversion idempotent if Obsidian closes after note creation but before
-  // the completed task is removed from the source note.
+  // Check the base filename and numbered collision variants without ever
+  // overwriting or reusing an existing task note.
   for (let index = 0; index < 10000; index++) {
     const suffix = index === 0 ? '' : `_${index}`;
     const path = normalizePath(`${folderPath}/${baseName}${suffix}.md`);
@@ -279,13 +329,11 @@ async function getOrCreateTaskNote(app, folderPath, title, completed, noteId, ma
 
     if (!existing) {
       const created = await app.vault.create(path, content);
-      return { file: created, created: true };
+      return { file: created, created: true, content };
     }
 
-    // Never reuse an existing note, even when it contains the same marker.
     // A later task can legitimately have identical text, topic, and date.
-    // Reusing the old note would make that new task disappear without creating
-    // its own archive record. Always continue to the next numeric suffix.
+    // Always continue to the next numeric suffix.
   }
 
   throw new Error(`Could not create a collision-free note for task: ${title}`);
@@ -457,16 +505,12 @@ function cleanExcessBlankLines(text) {
   return text.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\s*$/, '\n');
 }
 
-async function stableId(input) {
-  const bytes = new TextEncoder().encode(input);
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest)).slice(0, 12).map((b) => b.toString(16).padStart(2, '0')).join('');
-}
 
 module.exports = CompletedTasksToNotes;
 module.exports._test = {
   migrateSettings,
   buildTaskNote,
+  cleanTaskBody,
   taskFilenameSlug,
   extractCompletedTaskBlocks,
   addDoneDate,
