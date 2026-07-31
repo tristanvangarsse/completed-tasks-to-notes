@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.1
+
+- Store generated notes directly in the configured output folder.
+- Name notes as `YYYY-MM-DD_<first-40-task-characters>.md`.
+- Add `_1`, `_2`, and subsequent numeric suffixes for filename collisions.
+- Remove the year/month folder setting.
+
 ## 2.0.0
 
 - Renamed the plugin to **Completed Tasks to Notes**.

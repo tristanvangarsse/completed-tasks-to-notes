@@ -1,10 +1,9 @@
 const { Plugin, PluginSettingTab, Setting, Notice, TFile, TFolder, normalizePath, moment } = require('obsidian');
 
 const DEFAULT_SETTINGS = {
-  settingsVersion: 3,
+  settingsVersion: 4,
   sourceNote: 'Tasks.md',
   outputFolder: 'Archive/Tasks',
-  organizeByDate: true,
   addSourceProperty: true,
   addHeadingPathProperty: true,
   noticeOnConvert: true,
@@ -81,13 +80,14 @@ class CompletedTasksToNotes extends Plugin {
         const noteId = await stableId(`${sourcePath}\n${candidate.identityKey}`);
         const marker = `<!-- completed-task-note-id: ${noteId} -->`;
         const title = taskTitleFromBlock(datedBlock) || 'Completed task';
-        const folderPath = getOutputFolder(this.settings.outputFolder, completed, this.settings.organizeByDate);
+        const folderPath = normalizePath(this.settings.outputFolder);
 
         await ensureFolder(this.app, folderPath);
         const noteResult = await getOrCreateTaskNote(
           this.app,
           folderPath,
           title,
+          completed,
           noteId,
           marker,
           buildTaskNote({
@@ -181,16 +181,6 @@ class CompletedTasksToNotesSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName('Organize notes by year and month')
-      .setDesc('Store notes in YYYY/MM subfolders while keeping topic information in properties.')
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.organizeByDate)
-        .onChange(async (value) => {
-          this.plugin.settings.organizeByDate = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
       .setName('Add source property')
       .setDesc('Add a link to the source note and nearest heading.')
       .addToggle((toggle) => toggle
@@ -240,7 +230,6 @@ function migrateSettings(saved) {
     settingsVersion: DEFAULT_SETTINGS.settingsVersion,
     sourceNote: saved.sourceNote || DEFAULT_SETTINGS.sourceNote,
     outputFolder: saved.outputFolder || saved.archiveFolder || DEFAULT_SETTINGS.outputFolder,
-    organizeByDate: typeof saved.organizeByDate === 'boolean' ? saved.organizeByDate : DEFAULT_SETTINGS.organizeByDate,
     addSourceProperty: typeof saved.addSourceProperty === 'boolean'
       ? saved.addSourceProperty
       : (typeof saved.addSourceLink === 'boolean' ? saved.addSourceLink : DEFAULT_SETTINGS.addSourceProperty),
@@ -276,43 +265,40 @@ function buildTaskNote(options) {
   return `${properties.join('\n')}\n\n# ${options.title}\n\n${options.block.trimEnd()}\n\n${options.marker}\n`;
 }
 
-async function getOrCreateTaskNote(app, folderPath, title, noteId, marker, content) {
-  const baseName = safeFilename(title).slice(0, 120) || 'Completed task';
-  const paths = [
-    normalizePath(`${folderPath}/${baseName}.md`),
-    normalizePath(`${folderPath}/${baseName}--${noteId.slice(0, 8)}.md`)
-  ];
+async function getOrCreateTaskNote(app, folderPath, title, completed, noteId, marker, content) {
+  const slug = taskFilenameSlug(title, 40);
+  const baseName = `${completed}_${slug}`;
 
-  for (const path of paths) {
+  // Check the base filename and numbered collision variants. This also makes
+  // conversion idempotent if Obsidian closes after note creation but before
+  // the completed task is removed from the source note.
+  for (let index = 0; index < 10000; index++) {
+    const suffix = index === 0 ? '' : `_${index}`;
+    const path = normalizePath(`${folderPath}/${baseName}${suffix}.md`);
     const existing = app.vault.getAbstractFileByPath(path);
+
     if (!existing) {
       const created = await app.vault.create(path, content);
       return { file: created, created: true };
     }
-    if (!(existing instanceof TFile)) continue;
-    const existingContent = await app.vault.cachedRead(existing);
-    if (existingContent.includes(marker)) return { file: existing, created: false };
-  }
 
-  const fallbackPath = normalizePath(`${folderPath}/${baseName}--${noteId}.md`);
-  const fallback = app.vault.getAbstractFileByPath(fallbackPath);
-  if (!fallback) {
-    const created = await app.vault.create(fallbackPath, content);
-    return { file: created, created: true };
-  }
-  if (fallback instanceof TFile) {
-    const existingContent = await app.vault.cachedRead(fallback);
-    if (existingContent.includes(marker)) return { file: fallback, created: false };
+    if (existing instanceof TFile) {
+      const existingContent = await app.vault.cachedRead(existing);
+      if (existingContent.includes(marker)) return { file: existing, created: false };
+    }
   }
 
   throw new Error(`Could not create a collision-free note for task: ${title}`);
 }
 
-function getOutputFolder(baseFolder, completed, organizeByDate) {
-  const base = normalizePath(baseFolder);
-  if (!organizeByDate) return base;
-  const [year, month] = completed.split('-');
-  return normalizePath(`${base}/${year}/${month}`);
+function taskFilenameSlug(value, maxLength) {
+  const slug = safeFilename(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, maxLength)
+    .replace(/-+$/g, '');
+  return slug || 'completed-task';
 }
 
 function extractCompletedTaskBlocks(text) {
@@ -481,7 +467,7 @@ module.exports = CompletedTasksToNotes;
 module.exports._test = {
   migrateSettings,
   buildTaskNote,
-  getOutputFolder,
+  taskFilenameSlug,
   extractCompletedTaskBlocks,
   addDoneDate,
   taskTitleFromBlock,
