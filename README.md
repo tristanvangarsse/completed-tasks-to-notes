@@ -38,7 +38,7 @@ completed: "2026-07-31"
 type: task
 heading-path: "Tasks > Acme website redesign"
 source: "[[Tasks#Acme website redesign]]"
-content: "Ask [[Maya Chen]] whether order NP-4821 can arrive before 2026-08-14"
+content: "Ask [[Maya Chen]] whether order NP-4821 can arrive before 2026-08-14; Why: the brochures are required for the launch event; Related: [[Acme launch plan]]"
 ---
 
 Ask [[Maya Chen]] whether order NP-4821 can arrive before 2026-08-14
@@ -72,7 +72,7 @@ The task text is converted to a lowercase, hyphenated filename slug and limited 
 - **Type property:** stores `type: task`.
 - **Heading path property:** stores the full nested heading path.
 - **Source property:** links back to the original note and topic heading.
-- **Content property:** stores the task's main text in `content`, making it visible as a column in Bases.
+- **Content property:** stores the complete task block as one flattened `content` value for Bases. Nested bullets and continuation lines are preserved in order and separated with semicolons.
 - **Include task content in note body:** independently writes the task as plain text below the properties. The body has no duplicate heading, checkbox, or completion-date marker.
 
 Each generated property can be independently enabled or disabled. When all property toggles are off, the note is created without YAML frontmatter. The content-property and note-body options are independent, so users may enable either, both, or neither.

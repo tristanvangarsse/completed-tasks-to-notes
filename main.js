@@ -1,7 +1,7 @@
 const { Plugin, PluginSettingTab, Setting, Notice, TFile, TFolder, normalizePath, moment } = require('obsidian');
 
 const DEFAULT_SETTINGS = {
-  settingsVersion: 6,
+  settingsVersion: 7,
   sourceNote: 'Tasks.md',
   outputFolder: 'Archive/Tasks',
   addTopicProperty: true,
@@ -287,7 +287,7 @@ function buildTaskNote(options) {
   if (options.addTypeProperty) properties.push('type: task');
   if (options.addHeadingPathProperty) properties.push(`heading-path: ${yamlQuote(options.headingPath || options.topic)}`);
   if (options.addSourceProperty) properties.push(`source: ${yamlQuote(`[[${stripMd(options.sourcePath)}#${options.topic}]]`)}`);
-  if (options.addContentProperty) properties.push(`content: ${yamlQuote(options.title)}`);
+  if (options.addContentProperty) properties.push(`content: ${yamlQuote(flattenTaskContent(options.block))}`);
 
   const frontmatter = properties.length > 0 ? `---\n${properties.join('\n')}\n---\n` : '';
   const body = options.includeContentInBody ? cleanTaskBody(options.block) : '';
@@ -314,6 +314,20 @@ function cleanTaskBody(block) {
   }
 
   return lines.join('\n').trim();
+}
+
+function flattenTaskContent(block) {
+  return cleanTaskBody(block)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line
+      .replace(/^>\s*/, '')
+      .replace(/^[-*+]\s+(?:\[[ xX]\]\s+)?/, '')
+      .replace(/\s+/g, ' ')
+      .trim())
+    .filter(Boolean)
+    .join('; ');
 }
 
 async function getOrCreateTaskNote(app, folderPath, title, completed, content) {
@@ -511,6 +525,7 @@ module.exports._test = {
   migrateSettings,
   buildTaskNote,
   cleanTaskBody,
+  flattenTaskContent,
   taskFilenameSlug,
   extractCompletedTaskBlocks,
   addDoneDate,

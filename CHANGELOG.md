@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.5
+
+- Include the full task block in the `content` property instead of only the first line.
+- Flatten nested bullets and continuation lines into a single semicolon-separated value suitable for Obsidian Bases.
+
 ## 2.0.4
 
 - Added an optional `content` property containing the task's main text for display in Obsidian Bases.
