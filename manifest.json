@@ -1,4 +1,5 @@
 {
+<<<<<<< HEAD
     "id": "completed-tasks-to-notes",
     "name": "Completed Tasks to Notes",
     "version": "1.0.0",
@@ -7,3 +8,13 @@
     "author": "Tristan Van Garsse",
     "isDesktopOnly": false
 }
+=======
+  "id": "completed-tasks-to-notes",
+  "name": "Completed Tasks to Notes",
+  "version": "1.0.0",
+  "minAppVersion": "1.1.0",
+  "description": "Convert completed tasks into individual notes with optional content, topic, completion date, and source properties for Bases and search.",
+  "author": "Tristan Van Garsse",
+  "isDesktopOnly": false
+}
+>>>>>>> d50e4d12663a46493631edab5086f0825e348c5c
