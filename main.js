@@ -1,47 +1,44 @@
 const { Plugin, PluginSettingTab, Setting, Notice, TFile, TFolder, normalizePath, moment } = require('obsidian');
 
 const DEFAULT_SETTINGS = {
-  settingsVersion: 2,
+  settingsVersion: 3,
   sourceNote: 'Tasks.md',
-  archiveFolder: 'Archive/Tasks',
-  addSourceLink: true,
-  monthHeadings: true,
-  noticeOnArchive: true,
+  outputFolder: 'Archive/Tasks',
+  organizeByDate: true,
+  addSourceProperty: true,
+  addHeadingPathProperty: true,
+  noticeOnConvert: true,
   debounceMs: 120
 };
 
-class TopicTaskArchiver extends Plugin {
+class CompletedTasksToNotes extends Plugin {
   async onload() {
     const saved = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, saved || {});
-    if (!saved || !saved.settingsVersion) {
-      this.settings.settingsVersion = DEFAULT_SETTINGS.settingsVersion;
-      this.settings.debounceMs = DEFAULT_SETTINGS.debounceMs;
-      await this.saveData(this.settings);
-    }
+    this.settings = migrateSettings(saved || {});
+    await this.saveData(this.settings);
 
     this.processing = false;
     this.pendingRun = false;
     this.timer = null;
 
-    this.addSettingTab(new TopicTaskArchiverSettingTab(this.app, this));
+    this.addSettingTab(new CompletedTasksToNotesSettingTab(this.app, this));
 
     this.registerEvent(this.app.workspace.on('editor-change', (_editor, info) => {
       if (info && info.file && info.file.path === normalizePath(this.settings.sourceNote)) {
-        this.scheduleArchive();
+        this.scheduleConversion();
       }
     }));
 
     this.registerEvent(this.app.vault.on('modify', (file) => {
       if (file instanceof TFile && file.path === normalizePath(this.settings.sourceNote)) {
-        this.scheduleArchive();
+        this.scheduleConversion();
       }
     }));
 
     this.addCommand({
-      id: 'archive-completed-tasks-now',
-      name: 'Archive completed tasks now',
-      callback: () => void this.archiveCompletedTasks()
+      id: 'convert-completed-tasks-now',
+      name: 'Convert completed tasks to notes now',
+      callback: () => void this.convertCompletedTasks()
     });
   }
 
@@ -49,16 +46,16 @@ class TopicTaskArchiver extends Plugin {
     window.clearTimeout(this.timer);
   }
 
-  scheduleArchive() {
+  scheduleConversion() {
     window.clearTimeout(this.timer);
-    this.timer = window.setTimeout(() => void this.archiveCompletedTasks(), this.settings.debounceMs);
+    this.timer = window.setTimeout(() => void this.convertCompletedTasks(), this.settings.debounceMs);
   }
 
   async saveSettings() {
     await this.saveData(this.settings);
   }
 
-  async archiveCompletedTasks() {
+  async convertCompletedTasks() {
     if (this.processing) {
       this.pendingRun = true;
       return;
@@ -74,39 +71,51 @@ class TopicTaskArchiver extends Plugin {
       const candidates = extractCompletedTaskBlocks(original);
       if (candidates.length === 0) return;
 
-      await ensureFolder(this.app, this.settings.archiveFolder);
-
-      const archivedKeys = new Set();
-      let archiveWrites = 0;
+      const convertedKeys = new Set();
+      let createdCount = 0;
 
       for (const candidate of candidates) {
-        const doneDate = candidate.doneDate || moment().format('YYYY-MM-DD');
-        const datedBlock = addDoneDate(candidate.block, doneDate);
+        const completed = candidate.doneDate || moment().format('YYYY-MM-DD');
+        const datedBlock = addDoneDate(candidate.block, completed);
         const topic = candidate.heading || 'Uncategorized';
-        const archiveId = await stableId(`${sourcePath}\n${candidate.identityKey}`);
-        const marker = `<!-- topic-task-archive-id: ${archiveId} -->`;
-        const archiveFile = await getOrCreateTopicArchive(this.app, this.settings.archiveFolder, topic);
-        const childIndent = `${getTaskIndent(datedBlock)}  `;
-        const sourceLink = this.settings.addSourceLink
-          ? `\n${childIndent}- Source: [[${stripMd(sourcePath)}#${escapeHeading(topic)}]]`
-          : '';
-        const entry = `${datedBlock}${sourceLink}\n${marker}`;
+        const noteId = await stableId(`${sourcePath}\n${candidate.identityKey}`);
+        const marker = `<!-- completed-task-note-id: ${noteId} -->`;
+        const title = taskTitleFromBlock(datedBlock) || 'Completed task';
+        const folderPath = getOutputFolder(this.settings.outputFolder, completed, this.settings.organizeByDate);
 
-        let inserted = false;
-        await this.app.vault.process(archiveFile, (currentArchive) => {
-          if (currentArchive.includes(marker)) return currentArchive;
-          inserted = true;
-          return insertArchiveEntry(currentArchive, entry, doneDate, this.settings.monthHeadings);
-        });
+        await ensureFolder(this.app, folderPath);
+        const noteResult = await getOrCreateTaskNote(
+          this.app,
+          folderPath,
+          title,
+          noteId,
+          marker,
+          buildTaskNote({
+            title,
+            topic,
+            headingPath: candidate.headingPath,
+            completed,
+            sourcePath,
+            block: datedBlock,
+            marker,
+            addSourceProperty: this.settings.addSourceProperty,
+            addHeadingPathProperty: this.settings.addHeadingPathProperty
+          })
+        );
 
-        if (inserted) archiveWrites += 1;
-        archivedKeys.add(candidate.identityKey);
+        const noteContent = await this.app.vault.cachedRead(noteResult.file);
+        if (!noteContent.includes(marker)) {
+          throw new Error(`Could not verify created note: ${noteResult.file.path}`);
+        }
+
+        if (noteResult.created) createdCount += 1;
+        convertedKeys.add(candidate.identityKey);
       }
 
       let removedCount = 0;
       await this.app.vault.process(source, (current) => {
         const currentCandidates = extractCompletedTaskBlocks(current);
-        const removable = currentCandidates.filter((candidate) => archivedKeys.has(candidate.identityKey));
+        const removable = currentCandidates.filter((candidate) => convertedKeys.has(candidate.identityKey));
         if (removable.length === 0) return current;
 
         let next = current;
@@ -117,28 +126,28 @@ class TopicTaskArchiver extends Plugin {
         return cleanExcessBlankLines(next);
       });
 
-      if (this.settings.noticeOnArchive) {
+      if (this.settings.noticeOnConvert) {
         const changedCount = candidates.length - removedCount;
         if (changedCount > 0) {
-          new Notice(`Archived ${archiveWrites} task${archiveWrites === 1 ? '' : 's'}; ${changedCount} changed during archiving and remained in ${sourcePath}.`);
+          new Notice(`Created ${createdCount} task note${createdCount === 1 ? '' : 's'}; ${changedCount} changed during conversion and remained in ${sourcePath}.`);
         } else if (removedCount > 0) {
-          new Notice(`Archived ${removedCount} completed task${removedCount === 1 ? '' : 's'}.`);
+          new Notice(`Converted ${removedCount} completed task${removedCount === 1 ? '' : 's'} to note${removedCount === 1 ? '' : 's'}.`);
         }
       }
     } catch (error) {
-      console.error('Topic Task Archiver:', error);
-      new Notice(`Task archiving failed: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('Completed Tasks to Notes:', error);
+      new Notice(`Task conversion failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       this.processing = false;
       if (this.pendingRun) {
         this.pendingRun = false;
-        this.scheduleArchive();
+        this.scheduleConversion();
       }
     }
   }
 }
 
-class TopicTaskArchiverSettingTab extends PluginSettingTab {
+class CompletedTasksToNotesSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -147,11 +156,11 @@ class TopicTaskArchiverSettingTab extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl('h2', { text: 'Topic Task Archiver' });
+    containerEl.createEl('h2', { text: 'Completed Tasks to Notes' });
 
     new Setting(containerEl)
       .setName('Source task note')
-      .setDesc('The one note that contains all active checkboxes.')
+      .setDesc('The note containing the active tasks to monitor.')
       .addText((text) => text
         .setPlaceholder('Tasks.md')
         .setValue(this.plugin.settings.sourceNote)
@@ -161,57 +170,149 @@ class TopicTaskArchiverSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName('Archive folder')
-      .setDesc('One archive note is created per nearest heading/topic.')
+      .setName('Completed task notes folder')
+      .setDesc('The base folder where individual completed-task notes are created.')
       .addText((text) => text
         .setPlaceholder('Archive/Tasks')
-        .setValue(this.plugin.settings.archiveFolder)
+        .setValue(this.plugin.settings.outputFolder)
         .onChange(async (value) => {
-          this.plugin.settings.archiveFolder = value.trim() || DEFAULT_SETTINGS.archiveFolder;
+          this.plugin.settings.outputFolder = value.trim() || DEFAULT_SETTINGS.outputFolder;
           await this.plugin.saveSettings();
         }));
 
     new Setting(containerEl)
-      .setName('Archive delay')
-      .setDesc('Milliseconds to wait after an edit. Lower values feel faster; 100–150 ms is recommended.')
+      .setName('Organize notes by year and month')
+      .setDesc('Store notes in YYYY/MM subfolders while keeping topic information in properties.')
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.organizeByDate)
+        .onChange(async (value) => {
+          this.plugin.settings.organizeByDate = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Add source property')
+      .setDesc('Add a link to the source note and nearest heading.')
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.addSourceProperty)
+        .onChange(async (value) => {
+          this.plugin.settings.addSourceProperty = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Add heading path property')
+      .setDesc('Add the full nested heading path as a property, in addition to the nearest topic.')
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.addHeadingPathProperty)
+        .onChange(async (value) => {
+          this.plugin.settings.addHeadingPathProperty = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Conversion delay')
+      .setDesc('Milliseconds to wait after an edit. Values from 100 to 150 ms usually feel immediate.')
       .addText((text) => text
         .setPlaceholder('120')
         .setValue(String(this.plugin.settings.debounceMs))
         .onChange(async (value) => {
           const parsed = Number.parseInt(value, 10);
-          this.plugin.settings.debounceMs = Number.isFinite(parsed) ? Math.min(2000, Math.max(50, parsed)) : DEFAULT_SETTINGS.debounceMs;
+          this.plugin.settings.debounceMs = Number.isFinite(parsed)
+            ? Math.min(2000, Math.max(50, parsed))
+            : DEFAULT_SETTINGS.debounceMs;
           await this.plugin.saveSettings();
         }));
 
     new Setting(containerEl)
-      .setName('Add source link')
-      .setDesc('Add a link back to the topic heading in the active task note.')
+      .setName('Show conversion notice')
       .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.addSourceLink)
+        .setValue(this.plugin.settings.noticeOnConvert)
         .onChange(async (value) => {
-          this.plugin.settings.addSourceLink = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Group archive by month')
-      .setDesc('Place completed tasks beneath YYYY-MM headings.')
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.monthHeadings)
-        .onChange(async (value) => {
-          this.plugin.settings.monthHeadings = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Show archive notice')
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.noticeOnArchive)
-        .onChange(async (value) => {
-          this.plugin.settings.noticeOnArchive = value;
+          this.plugin.settings.noticeOnConvert = value;
           await this.plugin.saveSettings();
         }));
   }
+}
+
+function migrateSettings(saved) {
+  return {
+    settingsVersion: DEFAULT_SETTINGS.settingsVersion,
+    sourceNote: saved.sourceNote || DEFAULT_SETTINGS.sourceNote,
+    outputFolder: saved.outputFolder || saved.archiveFolder || DEFAULT_SETTINGS.outputFolder,
+    organizeByDate: typeof saved.organizeByDate === 'boolean' ? saved.organizeByDate : DEFAULT_SETTINGS.organizeByDate,
+    addSourceProperty: typeof saved.addSourceProperty === 'boolean'
+      ? saved.addSourceProperty
+      : (typeof saved.addSourceLink === 'boolean' ? saved.addSourceLink : DEFAULT_SETTINGS.addSourceProperty),
+    addHeadingPathProperty: typeof saved.addHeadingPathProperty === 'boolean'
+      ? saved.addHeadingPathProperty
+      : DEFAULT_SETTINGS.addHeadingPathProperty,
+    noticeOnConvert: typeof saved.noticeOnConvert === 'boolean'
+      ? saved.noticeOnConvert
+      : (typeof saved.noticeOnArchive === 'boolean' ? saved.noticeOnArchive : DEFAULT_SETTINGS.noticeOnConvert),
+    debounceMs: Number.isFinite(saved.debounceMs)
+      ? Math.min(2000, Math.max(50, saved.debounceMs))
+      : DEFAULT_SETTINGS.debounceMs
+  };
+}
+
+function buildTaskNote(options) {
+  const properties = [
+    '---',
+    `topic: ${yamlQuote(options.topic)}`,
+    'status: completed',
+    `completed: ${yamlQuote(options.completed)}`,
+    'type: task'
+  ];
+
+  if (options.addHeadingPathProperty) {
+    properties.push(`heading-path: ${yamlQuote(options.headingPath || options.topic)}`);
+  }
+  if (options.addSourceProperty) {
+    properties.push(`source: ${yamlQuote(`[[${stripMd(options.sourcePath)}#${options.topic}]]`)}`);
+  }
+
+  properties.push('---');
+  return `${properties.join('\n')}\n\n# ${options.title}\n\n${options.block.trimEnd()}\n\n${options.marker}\n`;
+}
+
+async function getOrCreateTaskNote(app, folderPath, title, noteId, marker, content) {
+  const baseName = safeFilename(title).slice(0, 120) || 'Completed task';
+  const paths = [
+    normalizePath(`${folderPath}/${baseName}.md`),
+    normalizePath(`${folderPath}/${baseName}--${noteId.slice(0, 8)}.md`)
+  ];
+
+  for (const path of paths) {
+    const existing = app.vault.getAbstractFileByPath(path);
+    if (!existing) {
+      const created = await app.vault.create(path, content);
+      return { file: created, created: true };
+    }
+    if (!(existing instanceof TFile)) continue;
+    const existingContent = await app.vault.cachedRead(existing);
+    if (existingContent.includes(marker)) return { file: existing, created: false };
+  }
+
+  const fallbackPath = normalizePath(`${folderPath}/${baseName}--${noteId}.md`);
+  const fallback = app.vault.getAbstractFileByPath(fallbackPath);
+  if (!fallback) {
+    const created = await app.vault.create(fallbackPath, content);
+    return { file: created, created: true };
+  }
+  if (fallback instanceof TFile) {
+    const existingContent = await app.vault.cachedRead(fallback);
+    if (existingContent.includes(marker)) return { file: fallback, created: false };
+  }
+
+  throw new Error(`Could not create a collision-free note for task: ${title}`);
+}
+
+function getOutputFolder(baseFolder, completed, organizeByDate) {
+  const base = normalizePath(baseFolder);
+  if (!organizeByDate) return base;
+  const [year, month] = completed.split('-');
+  return normalizePath(`${base}/${year}/${month}`);
 }
 
 function extractCompletedTaskBlocks(text) {
@@ -321,78 +422,13 @@ function addDoneDate(block, date) {
   return lines.join('\n');
 }
 
-function insertArchiveEntry(content, entry, doneDate, useMonthHeading) {
-  const clean = content.trimEnd();
-  if (!useMonthHeading) return `${clean}\n\n${entry}\n`;
-
-  const month = doneDate.slice(0, 7);
-  const heading = `## ${month}`;
-  const lines = clean.split('\n');
-  const headingIndex = lines.findIndex((line) => line.trim() === heading);
-
-  if (headingIndex === -1) {
-    lines.push('', heading, '', entry);
-  } else {
-    let insertAt = lines.length;
-    for (let i = headingIndex + 1; i < lines.length; i++) {
-      if (/^##\s+/.test(lines[i])) { insertAt = i; break; }
-    }
-    lines.splice(insertAt, 0, '', entry);
-  }
-
-  return sortMonthlySectionsNewestFirst(lines.join('\n'));
-}
-
-function sortMonthlySectionsNewestFirst(content) {
-  const lines = content.trimEnd().split('\n');
-  const starts = [];
-  for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].trim().match(/^##\s+(\d{4}-\d{2})$/);
-    if (match) starts.push({ index: i, month: match[1] });
-  }
-  if (starts.length < 2) return `${lines.join('\n').trimEnd()}\n`;
-
-  const prefix = lines.slice(0, starts[0].index);
-  const sections = starts.map((start, index) => {
-    const end = index + 1 < starts.length ? starts[index + 1].index : lines.length;
-    return { month: start.month, lines: lines.slice(start.index, end) };
-  });
-
-  sections.sort((a, b) => b.month.localeCompare(a.month));
-  const output = [...prefix];
-  for (const section of sections) {
-    while (output.length > 0 && output[output.length - 1] === '') output.pop();
-    output.push('', ...section.lines);
-  }
-  return `${output.join('\n').trimEnd()}\n`;
-}
-
-async function getOrCreateTopicArchive(app, folderPath, topic) {
-  const normalizedFolder = normalizePath(folderPath);
-  const base = safeFilename(topic);
-  const topicId = await stableId(topic);
-  const topicMarker = `<!-- topic-task-topic-id: ${topicId} -->`;
-  const candidates = [
-    normalizePath(`${normalizedFolder}/${base}.md`),
-    normalizePath(`${normalizedFolder}/${base}--${topicId.slice(0, 8)}.md`)
-  ];
-
-  for (const path of candidates) {
-    const existing = app.vault.getAbstractFileByPath(path);
-    if (!existing) {
-      return app.vault.create(path, `# ${topic} — completed tasks\n\n${topicMarker}\n`);
-    }
-    if (!(existing instanceof TFile)) continue;
-    const content = await app.vault.cachedRead(existing);
-    if (content.includes(topicMarker) || content.startsWith(`# ${topic} — completed tasks`)) {
-      if (!content.includes(topicMarker)) {
-        await app.vault.process(existing, (current) => current.includes(topicMarker) ? current : `${current.trimEnd()}\n\n${topicMarker}\n`);
-      }
-      return existing;
-    }
-  }
-
-  throw new Error(`Could not create a collision-free archive file for topic: ${topic}`);
+function taskTitleFromBlock(block) {
+  const firstLine = block.split('\n')[0] || '';
+  return firstLine
+    .replace(/^\s*[-*+]\s+\[[xX]\]\s+/, '')
+    .replace(/✅\s*\d{4}-\d{2}-\d{2}\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 async function ensureFolder(app, folderPath) {
@@ -410,25 +446,21 @@ async function ensureFolder(app, folderPath) {
 
 function safeFilename(value) {
   const cleaned = value
-    .replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, '$1')
+    .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_match, target, alias) => alias || target)
+    .replace(/[*_`~]/g, '')
     .replace(/[\\/:*?"<>|#^[\]]/g, '-')
     .replace(/\s+/g, ' ')
     .replace(/[. ]+$/g, '')
     .trim();
-  return cleaned || 'Uncategorized';
+  return cleaned || 'Completed task';
 }
 
-function getTaskIndent(block) {
-  const match = block.match(/^(\s*)/);
-  return match ? match[1] : '';
+function yamlQuote(value) {
+  return JSON.stringify(String(value));
 }
 
 function stripMd(path) {
   return path.replace(/\.md$/i, '');
-}
-
-function escapeHeading(heading) {
-  return heading.replace(/\|/g, '\\|');
 }
 
 function visualIndent(spaces) {
@@ -445,12 +477,14 @@ async function stableId(input) {
   return Array.from(new Uint8Array(digest)).slice(0, 12).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-module.exports = TopicTaskArchiver;
+module.exports = CompletedTasksToNotes;
 module.exports._test = {
+  migrateSettings,
+  buildTaskNote,
+  getOutputFolder,
   extractCompletedTaskBlocks,
   addDoneDate,
-  insertArchiveEntry,
-  sortMonthlySectionsNewestFirst,
+  taskTitleFromBlock,
   safeFilename,
   normalizeTaskBlock,
   cleanExcessBlankLines
