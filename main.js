@@ -282,10 +282,10 @@ async function getOrCreateTaskNote(app, folderPath, title, completed, noteId, ma
       return { file: created, created: true };
     }
 
-    if (existing instanceof TFile) {
-      const existingContent = await app.vault.cachedRead(existing);
-      if (existingContent.includes(marker)) return { file: existing, created: false };
-    }
+    // Never reuse an existing note, even when it contains the same marker.
+    // A later task can legitimately have identical text, topic, and date.
+    // Reusing the old note would make that new task disappear without creating
+    // its own archive record. Always continue to the next numeric suffix.
   }
 
   throw new Error(`Could not create a collision-free note for task: ${title}`);

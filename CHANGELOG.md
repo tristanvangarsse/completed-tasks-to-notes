@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.2
+
+- Fixed identical or similarly named tasks disappearing when an older generated note already contained the same internal marker.
+- Existing filenames are now always treated as collisions, producing `_1`, `_2`, and subsequent suffixes before the source task is removed.
+
 ## 2.0.1
 
 - Store generated notes directly in the configured output folder.
