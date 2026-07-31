@@ -80,7 +80,8 @@ class CompletedTasksToNotes extends Plugin {
       let createdCount = 0;
 
       for (const candidate of candidates) {
-        const completed = candidate.doneDate || moment().format('YYYY-MM-DD');
+        const archivedAt = moment().format('YYYY-MM-DDTHH:mm');
+        const completed = candidate.doneDate || archivedAt.slice(0, 10);
         const datedBlock = addDoneDate(candidate.block, completed);
         const topic = candidate.heading || 'Uncategorized';
         const title = taskTitleFromBlock(datedBlock) || 'Completed task';
@@ -97,6 +98,7 @@ class CompletedTasksToNotes extends Plugin {
             topic,
             headingPath: candidate.headingPath,
             completed,
+            completedAt: archivedAt,
             sourcePath,
             block: datedBlock,
             addTopicProperty: this.settings.addTopicProperty,
@@ -283,7 +285,7 @@ function buildTaskNote(options) {
   const properties = [];
   if (options.addTopicProperty) properties.push(`topic: ${yamlQuote(options.topic)}`);
   if (options.addStatusProperty) properties.push('status: completed');
-  if (options.addCompletedProperty) properties.push(`completed: ${yamlQuote(options.completed)}`);
+  if (options.addCompletedProperty) properties.push(`completed: ${yamlQuote(options.completedAt || options.completed)}`);
   if (options.addTypeProperty) properties.push('type: task');
   if (options.addHeadingPathProperty) properties.push(`heading-path: ${yamlQuote(options.headingPath || options.topic)}`);
   if (options.addSourceProperty) properties.push(`source: ${yamlQuote(`[[${stripMd(options.sourcePath)}#${options.topic}]]`)}`);
@@ -291,7 +293,7 @@ function buildTaskNote(options) {
 
   const frontmatter = properties.length > 0 ? `---\n${properties.join('\n')}\n---\n` : '';
   const body = options.includeContentInBody ? cleanTaskBody(options.block) : '';
-  if (frontmatter && body) return `${frontmatter}\n${body}\n`;
+  if (frontmatter && body) return `${frontmatter}${body}\n`;
   if (frontmatter) return `${frontmatter}\n`;
   if (body) return `${body}\n`;
   return '';
@@ -321,13 +323,30 @@ function flattenTaskContent(block) {
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => line
+    .map((line) => stripMarkdownStyling(line
       .replace(/^>\s*/, '')
       .replace(/^[-*+]\s+(?:\[[ xX]\]\s+)?/, '')
       .replace(/\s+/g, ' ')
-      .trim())
+      .trim()))
     .filter(Boolean)
     .join('; ');
+}
+
+function stripMarkdownStyling(value) {
+  return value
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/!\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_match, target, alias) => alias || target)
+    .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_match, target, alias) => alias || target)
+    .replace(/(`{1,3})(.*?)\1/g, '$2')
+    .replace(/(\*\*|__)(.*?)\1/g, '$2')
+    .replace(/(~~)(.*?)\1/g, '$2')
+    .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '$1')
+    .replace(/(?<!_)_([^_\n]+)_(?!_)/g, '$1')
+    .replace(/<([^>]+)>/g, '$1')
+    .replace(/\\([\`*_{}\[\]()#+\-.!~>])/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 async function getOrCreateTaskNote(app, folderPath, title, completed, content) {
@@ -526,6 +545,7 @@ module.exports._test = {
   buildTaskNote,
   cleanTaskBody,
   flattenTaskContent,
+  stripMarkdownStyling,
   taskFilenameSlug,
   extractCompletedTaskBlocks,
   addDoneDate,

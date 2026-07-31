@@ -51,3 +51,9 @@
 ## 1.0.0
 
 - Added collision-safe topic archive filenames and atomic archive updates.
+
+## 2.0.6
+
+- Store the archive time in the `completed` property using `YYYY-MM-DDTHH:mm`.
+- Remove Markdown styling and link syntax from the generated `content` property.
+- Remove the extra blank line between YAML properties and note body content.

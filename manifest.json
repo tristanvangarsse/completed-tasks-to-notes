@@ -1,7 +1,7 @@
 {
   "id": "completed-tasks-to-notes",
   "name": "Completed Tasks to Notes",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "minAppVersion": "1.1.0",
   "description": "Convert completed Obsidian tasks into individual notes with optional content, topic, completion date, and source properties for Bases and search.",
   "author": "Tristan Van Garsse",
